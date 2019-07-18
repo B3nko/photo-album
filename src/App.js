@@ -3,6 +3,7 @@ import { Grid, Header, Input, List, Segment } from 'semantic-ui-react';
 import Amplify, { API, graphqlOperation } from 'aws-amplify';
 import aws_exports from './aws-exports';
 import { withAuthenticator, Connect } from 'aws-amplify-react';
+import { BrowserRouter as Router, Route, NavLink } from 'react-router-dom';
 
 Amplify.configure(aws_exports);
 
@@ -29,9 +30,10 @@ function makeComparator(key, order = 'asc') {
 class AlbumsList extends React.Component {
   albumItems() {
     return this.props.albums.sort(makeComparator('name')).map(album =>
-      <li key={album.id}>
-        {album.name}
-      </li>);
+      <List.Item key={album.id}>
+        <NavLink to={`/albums/${album.id}`}>{album.name}</NavLink>
+      </List.Item>
+    );
   }
 
   render() {
@@ -58,14 +60,37 @@ const ListAlbums = `query ListAlbums {
 }`;
 
 
-// 5. NEW: Add an AlbumsListLoader component that will use the 
-//    Connect component from Amplify to provide data to AlbumsList
+
+// 2. EDIT: Update AlbumsListLoader to work with subscriptions
 class AlbumsListLoader extends React.Component {
+
+  // 2a. NEW: add a onNewAlbum() function for handling subscription events
+  onNewAlbum = (prevQuery, newData) => {
+    // When we get data about a new album, 
+    // we need to put in into an object 
+    // with the same shape as the original query results, 
+    // but with the new data added as well
+    let updatedQuery = Object.assign({}, prevQuery);
+    updatedQuery.listAlbums.items = prevQuery.listAlbums.items.concat([newData.onCreateAlbum]);
+
+    return updatedQuery;
+  }
+
   render() {
     return (
-      <Connect query={graphqlOperation(ListAlbums)}>
+      <Connect
+        query={graphqlOperation(ListAlbums)}
+
+        // 2b. NEW: Listen to our 
+        // SubscribeToNewAlbums subscription
+        subscription={graphqlOperation(SubscribeToNewAlbums)}
+        // 2c. NEW: Handle new subscription messages
+        onSubscriptionMsg={this.onNewAlbum}
+      >
+
         {({ data, loading, errors }) => {
           if (loading) { return <div>Loading...</div>; }
+          if (errors.length > 0) { return <div>{JSON.stringify(errors)}</div>; }
           if (!data.listAlbums) return;
 
           return <AlbumsList albums={data.listAlbums.items} />;
@@ -124,19 +149,71 @@ class NewAlbum extends Component {
   }
 }
 
+const SubscribeToNewAlbums = `
+  subscription OnCreateAlbum {
+    onCreateAlbum {
+      id
+      name
+    }
+  }
+`;
 
+const GetAlbum = `query GetAlbum($id: ID!) {
+  getAlbum(id: $id) {
+    id
+    name
+  }
+}
+`;
+
+class AlbumDetailsLoader extends React.Component {
+  render() {
+    return (
+      <Connect query={graphqlOperation(GetAlbum, { id: this.props.id })}>
+        {({ data, loading, errors }) => {
+          if (loading) { return <div>Loading...</div>; }
+          if (errors.length > 0) { return <div>{JSON.stringify(errors)}</div>; }
+          if (!data.getAlbum) return;
+          return <AlbumDetails album={data.getAlbum} />;
+        }}
+      </Connect>
+    );
+  }
+}
+
+class AlbumDetails extends Component {
+  render() {
+    return (
+      <Segment>
+        <Header as='h3'>{this.props.album.name}</Header>
+        <p>TODO: Allow photo uploads</p>
+        <p>TODO: Show photos for this album</p>
+      </Segment>
+    )
+  }
+}
 
 // 6. EDIT: Change the App component to look nicer and
 //    use the AlbumsListLoader component
 class App extends Component {
   render() {
     return (
-      <Grid padded>
-        <Grid.Column>
-          <NewAlbum />
-          <AlbumsListLoader />
-        </Grid.Column>
-      </Grid>
+      <Router>
+        <Grid padded>
+          <Grid.Column>
+            <Route path="/" exact component={NewAlbum} />
+            <Route path="/" exact component={AlbumsListLoader} />
+            <Route
+              path="/albums/:albumId"
+              render={() => <div><NavLink to='/'>Back to Albums list</NavLink></div>}
+            />
+            <Route
+              path="/albums/:albumId"
+              render={props => <AlbumDetailsLoader id={props.match.params.albumId} />}
+            />
+          </Grid.Column>
+        </Grid>
+      </Router>
     );
   }
 }
